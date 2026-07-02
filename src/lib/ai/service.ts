@@ -23,6 +23,7 @@ import type {
 } from '@/types/domain';
 import { getModel, isMockMode as registryIsMockMode } from './providers/registry';
 import { InfraError, UserError, isInfraError, logError } from '@/lib/errors';
+import { getCachedResponse, setCachedResponse } from './cache';
 
 export type { ChapterGenerationContext };
 
@@ -61,10 +62,21 @@ function safeJson<T>(raw: string): T {
 
 async function runOrMock<T>(prompt: string, mockFn: () => T): Promise<{ value: T; mock: boolean }> {
   if (await isMockMode()) return { value: mockFn(), mock: true };
+
+  const cachedRaw = await getCachedResponse(prompt);
+  if (cachedRaw !== null) {
+    try {
+      return { value: safeJson<T>(cachedRaw), mock: false };
+    } catch {
+      // fall through to real API call
+    }
+  }
+
   try {
     const model = await getModel();
     if (!model) return { value: mockFn(), mock: true };
     const raw = await model.complete([{ role: 'user', content: prompt }], { jsonMode: true });
+    await setCachedResponse(prompt, raw);
     return { value: safeJson<T>(raw), mock: false };
   } catch (err) {
     if (!isInfraError(err)) {
